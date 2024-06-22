@@ -26,41 +26,49 @@ export function usePressureDatabase() {
     try {
       await database.execAsync("BEGIN TRANSACTION");
 
-      // Checar se já existe um agendamento na data
+      // Check if a schedule already exists for the date
       const querySchedule = "SELECT * FROM schedule WHERE date LIKE ?";
 
-      const hasSchedule =
-        await database.getFirstAsync<PressureMeasurementDatabase>(
-          querySchedule,
-          `%${scheduleData.date}%`
-        );
+      const queryScheduleAll = "SELECT * FROM schedule";
 
-      let scheduleStatement;
-      let scheduleResult: { lastInsertRowId: null | number } = {
-        lastInsertRowId: null,
-      };
+      const allSchedules = await database.getAllAsync<ScheduleDatabase>(
+        queryScheduleAll
+      );
 
-      if (!isFilledObject<PressureMeasurementDatabase | null>(hasSchedule)) {
-        scheduleStatement = await database.prepareAsync(
+      const currentDate = scheduleData.date.split("T")[0];
+      const hasSchedule = await database.getAllAsync<ScheduleDatabase>(
+        querySchedule,
+        `%${currentDate}%`
+      );
+
+      console.log("🚀 ~ usePressureDatabase ~ allSchedules:", allSchedules);
+      console.log("🚀 ~ usePressureDatabase ~ hasSchedule:", hasSchedule);
+      console.log("🚀 ~ usePressureDatabase ~ currentDate:", currentDate);
+
+      let scheduleId;
+
+      if (hasSchedule.length === 0) {
+        // Schedule does not exist, create a new one
+        const scheduleStatement = await database.prepareAsync(
           "INSERT INTO schedule (date, pressure_id) VALUES ($date, NULL)"
         );
 
-        scheduleResult = await scheduleStatement.executeAsync({
+        const scheduleResult = await scheduleStatement.executeAsync({
           $date: scheduleData.date,
         });
 
         await scheduleStatement.finalizeAsync();
+        scheduleId = scheduleResult.lastInsertRowId;
       } else {
-        scheduleResult.lastInsertRowId = hasSchedule!.id;
+        // Schedule exists, reuse the schedule_id
+        scheduleId = hasSchedule[0].id;
       }
-      // Insert schedule
-      const scheduleId = scheduleResult.lastInsertRowId;
+
       // Insert pressure measurement
       const pressureStatement = await database.prepareAsync(
         "INSERT INTO pressure_measurement (time, systolic_pressure, diastolic_pressure, schedule_id) VALUES ($time, $systolic_pressure, $diastolic_pressure, $schedule_id)"
       );
 
-      console.log("Inseriu o tempo: ", pressureData.time);
       const pressureResult = await pressureStatement.executeAsync({
         $time: pressureData.time,
         $systolic_pressure: pressureData.systolic_pressure,
@@ -71,15 +79,17 @@ export function usePressureDatabase() {
 
       const pressureId = pressureResult.lastInsertRowId;
 
-      // Update schedule with the pressure_id
-      const updateScheduleStatement = await database.prepareAsync(
-        "UPDATE schedule SET pressure_id = $pressure_id WHERE id = $id"
-      );
-      await updateScheduleStatement.executeAsync({
-        $pressure_id: pressureId,
-        $id: scheduleId,
-      });
-      await updateScheduleStatement.finalizeAsync();
+      // Update schedule with the pressure_id if it was a new schedule
+      if (hasSchedule.length === 0) {
+        const updateScheduleStatement = await database.prepareAsync(
+          "UPDATE schedule SET pressure_id = $pressure_id WHERE id = $id"
+        );
+        await updateScheduleStatement.executeAsync({
+          $pressure_id: pressureId,
+          $id: scheduleId,
+        });
+        await updateScheduleStatement.finalizeAsync();
+      }
 
       await database.execAsync("COMMIT");
 
@@ -156,7 +166,7 @@ export function usePressureDatabase() {
         FROM schedule s
         LEFT JOIN pressure_measurement pm ON s.id = pm.schedule_id
         ORDER BY
-          pressure_id DESC
+          date(pm.time) ASC
       `;
 
       const rows = await database.getAllAsync<any>(query);

@@ -11,42 +11,36 @@ import 'moment-timezone';
 import { logJSON } from "@/helpers";
 
 const months = [
-  "Janeiro", 
-  "Fevereiro", 
-  "Março", 
-  "Abril", 
-  "Maio", 
-  "Junho", 
-  "Julho", 
-  "Agosto", 
-  "Setembro", 
-  "Outubro", 
-  "Novembro", 
-  "Dezembro"
+  "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", 
+  "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
 ];
+
+moment.locale('pt');
+
+moment.updateLocale('pt', {
+    months : months
+});
 
 type GroupedMonth = {
   [key: string]: ScheduleWithPressureMeasurements[]
 }
 
-function groupSchedulesByMonth(schedules: ScheduleWithPressureMeasurements[]) {
+function groupSchedulesByMonth(schedules: ScheduleWithPressureMeasurements[]): GroupedMonth {
   return schedules.reduce((acc, schedule) => {
-    const monthIndex = moment.tz(schedule.date, "America/Sao_Paulo").month();
-    const monthName = months[monthIndex];
+    const monthName = moment.tz(schedule.date, "America/Sao_Paulo").format('MMMM');
     if (!acc[monthName]) {
       acc[monthName] = [];
     }
+
     acc[monthName].push(schedule);
     return acc;
-  }, {} as { [key: string]: ScheduleWithPressureMeasurements[] });
+  }, {} as GroupedMonth);
 }
 
 function translateSchedule(schedule: ScheduleWithPressureMeasurements) {
-  const { id, pressure_measurements } = schedule;
   const measurementsByDate: { [key: string]: PressureMeasurementDatabase[] } = {};
 
-  // Group measurements by day
-  pressure_measurements.forEach(pm => {
+  schedule.pressure_measurements.forEach(pm => {
     const localeDate = moment.tz(pm.time, "America/Sao_Paulo").format("DD/MM/YYYY");
     if (!measurementsByDate[localeDate]) {
       measurementsByDate[localeDate] = [];
@@ -62,15 +56,15 @@ function translateSchedule(schedule: ScheduleWithPressureMeasurements) {
     }).join('\n') + '\n';
   }
 
-  return { id, content };
+  return { id: schedule.id, content };
 }
 
 function createAccordionFromMonths(groupedSchedules: GroupedMonth): TAccordion[] {
   return months.map((month, index) => {
     const schedules = groupedSchedules[month] || [];
     const sortedSchedules = schedules.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-    // Group schedules by day within each month
-    const schedulesByDay = sortedSchedules.reduce((acc, schedule) => {
+
+    const measurementsByDay = sortedSchedules.reduce((acc, schedule) => {
       const day = moment.tz(schedule.date, "America/Sao_Paulo").format("DD/MM/YYYY");
       if (!acc[day]) {
         acc[day] = [];
@@ -79,15 +73,13 @@ function createAccordionFromMonths(groupedSchedules: GroupedMonth): TAccordion[]
       return acc;
     }, {} as { [key: string]: ScheduleWithPressureMeasurements[] });
 
-
-    const items = Object.keys(schedulesByDay).map((day: string, dayIndex: number) => {
-      const daySchedules = schedulesByDay[day];
-      const localeDay = moment.tz(daySchedules[0].date, "America/Sao_Paulo").format("DD/MM/YYYY");
-      const sortedDaySchedules = daySchedules.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-      const dayContent = sortedDaySchedules.map(translateSchedule);
+    const items = Object.keys(measurementsByDay).map((day, dayIndex) => {
+      const dayMeasurements = measurementsByDay[day];
+      const localeDay = moment.tz(dayMeasurements[0].date, "America/Sao_Paulo").format("DD/MM/YYYY");
+      const dayContent = dayMeasurements.map(translateSchedule);
       return {
         id: `${index + 1}.${dayIndex + 1}`,
-        title: ``,
+        title: '',
         content: `\nDia: ${localeDay}\n` + dayContent.map(item => item.content).join('')
       };
     });
@@ -103,40 +95,30 @@ function createAccordionFromMonths(groupedSchedules: GroupedMonth): TAccordion[]
 const { height } = Dimensions.get('window');
 
 export default function Measurements() {
-  const {
-    colors: { primary },
-  } = useAppTheme();
-
+  const { colors: { primary } } = useAppTheme();
   const [schedules, setSchedules] = useState<ScheduleWithPressureMeasurements[]>([]);
   const [dates, setDates] = useState<TAccordion[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-
   const pressureDatabase = usePressureDatabase();
 
-  async function list() {
-    try {
-      const response = await pressureDatabase.all();
-      setSchedules(response);
-      
-      const groupedSchedules = groupSchedulesByMonth(response);
-      const accordionData = createAccordionFromMonths(groupedSchedules);
-      setDates(accordionData);
-    } catch (error) {
-      console.log(error);
-    }
-  }
-
   useEffect(() => {
-    list();
-  }, []);
+    const fetchData = async () => {
+      try {
+        const response = await pressureDatabase.all();
+        setSchedules(response);
 
-  useEffect(() => {
-    if (dates.length > 0) {
-      setTimeout(() => {
+        const groupedSchedules = groupSchedulesByMonth(response);
+        const accordionData = createAccordionFromMonths(groupedSchedules);
+        setDates(accordionData);
         setIsLoading(false);
-      }, 1000);
-    }
-  }, [dates]);
+      } catch (error) {
+        console.error("Error fetching schedules:", error);
+        setIsLoading(false);
+      }
+    };
+
+    fetchData();
+  }, []);
 
   return (
     <SafeAreaView>
@@ -146,15 +128,12 @@ export default function Measurements() {
             title: 'Histórico - Pressão / Medições',
             headerStyle: { backgroundColor: primary },
             headerTintColor: '#fff',
-            headerTitleStyle: {
-              fontWeight: 'bold',
-            },
+            headerTitleStyle: { fontWeight: 'bold' },
           }}
         />
-
         {
           isLoading ? (
-            <View style={{ height: height - 40, flex: 1, justifyContent: "center", alignItems: "center" }}>
+            <View style={styles.loadingContainer}>
               <ActivityIndicator animating={true} size="large" />
             </View>
           ) : (
@@ -174,6 +153,12 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     padding: 32,
-    gap: 16
-  }
+    gap: 16,
+  },
+  loadingContainer: {
+    height: height - 40,
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
 });

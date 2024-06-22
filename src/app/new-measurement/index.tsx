@@ -133,7 +133,7 @@ export default function Index() {
           </Dialog>
         </Portal>
 
-        {/* <Button mode="contained" onPress={handleDrop}>Deletar Banco</Button> */}
+        <Button mode="contained" onPress={handleDrop}>Deletar Banco</Button>
 
         <View style={styles.container}>
           <View style={styles.infoContainer}>
